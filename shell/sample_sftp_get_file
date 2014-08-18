@@ -1,0 +1,6 @@
+#!/bin/sh
+sftp -oport=1754 gaurav@54.251.100.129 -b <<EOF
+cd dwh
+ls
+bye
+EOF
