@@ -1,0 +1,112 @@
+
+## settiing default values of variable
+
+  port="22"
+  date_format="%Y-%m-%d"
+  prefix="snapDeal"
+  suffix=".csv"
+  dayago="1"
+
+## getting credentials of configuration table
+
+server_name=dwh_master
+db_name=Third_Party_Integrations
+dbip=`cat ~/config/mysql_cred.csv | grep $server_name | grep $db_name | cut -d"," -f3`
+dbuser=`cat ~/config/mysql_cred.csv | grep $server_name | grep $db_name | cut -d"," -f4`
+dbpwd=`cat ~/config/mysql_cred.csv | grep $server_name | grep $db_name | cut -d"," -f5`
+dates=`date -d '1 day ago' '+%m%Y'`
+
+## creating configuration file from table
+
+echo mysql -h $dbip -u$dbuser -p$dbpwd $db_name -
+
+
+#mysql -h $dbip -u$dbuser -p$dbpwd $db_name -e "SELECT job_id,import_type,server_ip,user_connect,user_password,file_ext,file_like,source_path,destination_path,project_name,task_name,project_id,task_id,conn_port,priority,active_flag,done_file_location,done_file_name,file_date_type,run_schedule,unzip_type,delimiters,destination_date_type FROM Third_Party_Integrations.hdfs_import_file WHERE active_flag = 1 AND run_schedule LIKE CONCAT('%',HOUR(NOW()),'%');" | sed -e '1,1d' | sed 's/\t/,/g' | sed 's/*/\\\\*/g' > /home/biops/param/hdfs_import_file_param.csv
+
+## processing each and every scheduled request one by one.
+
+while read line
+do
+
+job_id=`echo $line | cut -d, -f1`
+import_type=`echo $line | cut -d, -f2`
+server_ip=`echo $line | cut -d, -f3`
+user_connect=`echo $line | cut -d, -f4`
+user_password=`echo $line | cut -d, -f5`
+file_ext=`echo $line | cut -d, -f6`
+file_like=`echo $line | cut -d, -f7`
+source_path=`echo $line | cut -d, -f8`
+destination_path=`echo $line | cut -d, -f9`
+project_name=`echo $line | cut -d, -f10`
+task_name=`echo $line | cut -d, -f11`
+project_id=`echo $line | cut -d, -f12`
+task_id=`echo $line | cut -d, -f13`
+conn_port=`echo $line | cut -d, -f14`
+priority=`echo $line | cut -d, -f15`
+active_flag=`echo $line | cut -d, -f16`
+done_file_location=`echo $line | cut -d, -f17`
+done_file_name=`echo $line | cut -d, -f18`
+file_date_type=`echo $line | cut -d, -f19`
+crontab_details=`echo $line | cut -d, -f20` 
+unzip_type=`echo $line | cut -d, -f21`
+delimiters=`echo $line | cut -d, -f22`
+destination_date_type=`echo $line | cut -d, -f23`
+file_date=`date +"$file_date_type" --date="$dayago days ago"`
+file_name="*"
+destination_date=`date +"$destination_date_type" --date="$dayago days ago"`
+
+
+## Check of configuration
+
+if [ "$file_like" != "NULL" ]; then
+
+file_name=$file_name$file_like*
+
+
+fi
+
+if [ "$file_date" != "NULL" ]; then
+
+file_name=$file_name$file_date*
+
+
+fi
+
+if [ "$file_ext" != "NULL" ]; then
+
+file_name=$file_name.$file_ext
+
+
+fi
+
+
+
+
+cd /home/biops/temp/hdfs_import_file
+
+rm /home/biops/temp/hdfs_import_file/*
+
+sftp -oport=$conn_port $user_connect@$server_ip -b <<EOF
+
+cd $source_path
+get $file_name
+bye
+EOF
+
+if [ "$unzip_type" = "zipsss" ]; then
+
+unzip *.zip
+rm *.zip
+
+fi
+
+hadoop dfs -mkdir $destination_path
+
+hadoop dfs -mkdir $destination_path/$destination_date 	
+
+hadoop dfs -copyFromLocal /home/biops/temp/hdfs_import_file/* $destination_path/$destination_date/
+
+echo "hi" > $done_file_location/$done_file_name.$destination_date.dones
+
+
+done < /home/biops/param/hdfs_import_file_param.csv
