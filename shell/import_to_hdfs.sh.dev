@@ -1,0 +1,143 @@
+
+## settiing default values of variable
+
+  port="22"
+  date_format="%Y-%m-%d"
+  prefix="snapDeal"
+  suffix=".csv"
+  dayago="1"
+
+## getting credentials of configuration table
+
+server_name=dwh_master
+db_name=Third_Party_Integrations
+dbip=`cat ~/config/mysql_cred.csv | grep $server_name | grep $db_name | cut -d"," -f3`
+dbuser=`cat ~/config/mysql_cred.csv | grep $server_name | grep $db_name | cut -d"," -f4`
+dbpwd=`cat ~/config/mysql_cred.csv | grep $server_name | grep $db_name | cut -d"," -f5`
+dates=`date -d '1 day ago' '+%m%Y'`
+
+## creating configuration file from table
+
+mysql -h $dbip -u$dbuser -p$dbpwd $db_name -e "SELECT distinct project_id FROM Third_Party_Integrations.hdfs_import_file_test WHERE active_flag = 1 and run_schedule LIKE CONCAT('%',HOUR(NOW()),'%') and project_id is not null ;" | sed -e '1,1d' | sed 's/\t/,/g' | sed 's/*/\\\\*/g' > /home/biops/param/hdfs_import_file_param_project.csv
+
+#hadoop dfs -rm $done_file_location/$done_file_name.$destination_date.dones
+
+while read project_id
+do
+
+mysql -h $dbip -u$dbuser -p$dbpwd $db_name -e "SELECT job_id,import_type,server_ip,user_connect,user_password,file_ext,file_like,source_path,destination_path,project_name,task_name,project_id,task_id,conn_port,priority,active_flag,done_file_location,done_file_name,file_date_type,run_schedule,unzip_type,delimiters,destination_date_type,hive_table_db,hive_partition_value,hive_table_name,hive_partition_column FROM Third_Party_Integrations.hdfs_import_file_test WHERE active_flag = 1 and run_schedule LIKE CONCAT('%',HOUR(NOW()),'%') and project_id = $project_id ;" | sed -e '1,1d' | sed 's/\t/,/g' | sed 's/*/\\\\*/g' > /home/biops/param/hdfs_import_file_param.csv
+
+## processing each and every scheduled request one by one.
+
+while read line
+do
+
+job_id=`echo $line | cut -d, -f1`
+import_type=`echo $line | cut -d, -f2`
+server_ip=`echo $line | cut -d, -f3`
+user_connect=`echo $line | cut -d, -f4`
+user_password=`echo $line | cut -d, -f5`
+file_ext=`echo $line | cut -d, -f6`
+file_like=`echo $line | cut -d, -f7`
+source_path=`echo $line | cut -d, -f8`
+destination_path=`echo $line | cut -d, -f9`
+project_name=`echo $line | cut -d, -f10`
+task_name=`echo $line | cut -d, -f11`
+project_id=`echo $line | cut -d, -f12`
+task_id=`echo $line | cut -d, -f13`
+conn_port=`echo $line | cut -d, -f14`
+priority=`echo $line | cut -d, -f15`
+active_flag=`echo $line | cut -d, -f16`
+done_file_location=`echo $line | cut -d, -f17`
+done_file_name=`echo $line | cut -d, -f18`
+file_date_type=`echo $line | cut -d, -f19`
+crontab_details=`echo $line | cut -d, -f20` 
+unzip_type=`echo $line | cut -d, -f21`
+delimiters=`echo $line | cut -d, -f22`
+destination_date_type=`echo $line | cut -d, -f23`
+file_date=`date +"$file_date_type" --date="$dayago days ago"`
+file_name="*"
+destination_date=`date +"$destination_date_type" --date="$dayago days ago"`
+hive_table_db=`echo $line | cut -d, -f24`
+hive_partition_value=`echo $line | cut -d, -f25`
+hive_partition_value_date=`date +"$hive_partition_value" --date="$dayago days ago"`
+hive_table_name=`echo $line | cut -d, -f26`
+hive_partition_column=`echo $line | cut -d, -f27`
+
+
+## Check of configuration
+
+if [ "$file_like" != "NULL" ]; then
+
+file_name=$file_name$file_like*
+
+
+fi
+
+if [ "$file_date" != "NULL" ]; then
+
+file_name=$file_name$file_date*
+
+
+fi
+
+if [ "$file_ext" != "NULL" ]; then
+
+file_name=$file_name.$file_ext
+
+
+fi
+
+
+
+
+cd /home/biops/temp/hdfs_import_file
+
+rm /home/biops/temp/hdfs_import_file/*
+
+sftp -oport=$conn_port $user_connect@$server_ip -b <<EOF
+
+cd $source_path
+get $file_name
+bye
+EOF
+
+if [ "$unzip_type" = "zipsss" ]; then
+
+unzip *.zip
+rm *.zip
+
+fi
+
+hadoop dfs -mkdir $destination_path
+
+hadoop dfs -mkdir $destination_path/$destination_date 	
+
+hadoop dfs -copyFromLocal /home/biops/temp/hdfs_import_file/* $destination_path/$destination_date/
+
+#echo "hi" > $done_file_location/$done_file_name.$destination_date.dones
+
+
+
+#if [ "$hive_table_db" != "NULL" -a "$hive_partition_column_date" != "NULL" -a "$hive_table_name" != "NULL" ] ; then
+
+#if [ "$hive_table_db" != "NULL" ] ; then
+
+echo "LOAD DATA LOCAL '$destination_path/$destination_date/$file_name' INTO TABLE $hive_table_db.$hive_table_name PARTITION ($hive_partition_column = '$hive_partition_value_date')"
+
+hive -e  "LOAD DATA INPATH '$destination_path/$destination_date/$file_name' INTO TABLE $hive_table_db.$hive_table_name PARTITION ( $hive_partition_column = '$hive_partition_value_date')"
+
+#fi
+
+
+done < /home/biops/param/hdfs_import_file_param.csv
+
+
+
+echo "hi" > ~/temp/$done_file_name.$destination_date.dones
+
+hadoop dfs -copyFromLocal ~/temp/$done_file_name.$destination_date.dones $done_file_location/
+
+
+
+done < /home/biops/param/hdfs_import_file_param_project.csv
